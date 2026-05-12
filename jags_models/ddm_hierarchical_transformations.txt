@@ -1,0 +1,70 @@
+model{
+
+  ### likelihood ###
+  
+  for (j in 1:Nsub){
+    for (i in 1:Ntrial[j]) {
+      resp_uni[i,j] ~ dwiener(a[j], t[j], z[j], v[cond[i,j],j])
+    }
+  } 
+  
+  ### priors (on transformed scale) ### 
+  
+  # individual level (random draws from group-level distribution)
+  
+  for (j in 1:Nsub) {
+    log.a[j] ~ dnorm(mu.log.a, pow(sigma.log.a,-2))
+    log.t[j] ~ dnorm(mu.log.t, pow(sigma.log.t,-2))
+    probit.z[j] ~ dnorm(mu.probit.z,  pow(sigma.probit.z,-2))  
+    log.v[1,j] ~ dnorm(mu.log.v[1], pow(sigma.log.v[1],-2))
+    log.v[2,j] ~ dnorm(mu.log.v[2], pow(sigma.log.v[2],-2))
+  }
+  
+  # group level 
+  
+  mu.log.a ~ dnorm(1,.5)
+  sigma.log.a ~ dgamma(2,3)
+  
+  mu.log.t ~ dnorm(0,.5)
+  sigma.log.t ~ dnorm(0,.5) T(0,)
+  
+  mu.probit.z ~ dnorm(.5,.5)
+  sigma.probit.z ~ dnorm(0,.05) T(0,)
+  
+  mu.log.v[1] ~ dnorm(0,.5)
+  sigma.log.v[1] ~ dnorm(0,1) T(0,)
+  
+  mu.log.v[2] ~ dnorm(0,.5)
+  sigma.log.v[2] ~ dnorm(0,1) T(0,)
+  
+  ### transformations to parameter scale ### 
+  
+  # individual level
+  
+  for (j in 1:Nsub) {
+    a[j] <- exp(log.a[j])   
+    t[j] <- exp(log.t[j])
+    z[j] <- phi(probit.z[j])
+    v[1,j] <- -exp(log.v[1,j]) # negative drift rate for odd condition
+    v[2,j] <- exp(log.v[2,j])
+  }
+  
+  # group level 
+  
+  ## correct
+  
+  mu.a <- exp(mu.log.a + pow(sigma.log.a, 2)/2)
+  mu.t <- exp(mu.log.t + pow(sigma.log.t, 2)/2)
+  mu.z <- phi(mu.probit.z / sqrt(1 + pow(sigma.probit.z, 2))) 
+  mu.v[1] <- -exp(mu.log.v[1] + pow(sigma.log.v[1], 2)/2)
+  mu.v[2] <- exp(mu.log.v[2] + pow(sigma.log.v[2], 2)/2)
+  
+  ## simple
+  
+  simple.a <- exp(mu.log.a) 
+  simple.t <- exp(mu.log.t) 
+  simple.z <- phi(mu.probit.z)
+  simple.v[1] <- -exp(mu.log.v[1])
+  simple.v[2] <- exp(mu.log.v[2])
+
+}
