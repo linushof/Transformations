@@ -22,20 +22,20 @@ model{
   
   # group level 
   
-  mu.log.a ~ dnorm(1,.5)
-  sigma.log.a ~ dgamma(2,3)
+  mu.log.a ~ dnorm(1.2,1)
+  sigma.log.a ~ dgamma(1,5)
   
-  mu.log.t ~ dnorm(0,.5)
-  sigma.log.t ~ dnorm(0,.5) T(0,)
+  mu.log.t ~ dnorm(-1,.15)
+  sigma.log.t ~ dgamma(1,2)
   
-  mu.probit.z ~ dnorm(.5,.5)
-  sigma.probit.z ~ dnorm(0,.05) T(0,)
+  mu.probit.z ~ dnorm(0,1.25)
+  sigma.probit.z ~ dgamma(2,3)
   
-  mu.log.v[1] ~ dnorm(0,.5)
-  sigma.log.v[1] ~ dnorm(0,1) T(0,)
+  mu.log.v[1] ~ dnorm(1.5,1)
+  sigma.log.v[1] ~ dgamma(1,5)
   
-  mu.log.v[2] ~ dnorm(0,.5)
-  sigma.log.v[2] ~ dnorm(0,1) T(0,)
+  mu.log.v[2] ~ dnorm(1.5,1)
+  sigma.log.v[2] ~ dgamma(1,5)
   
   ### transformations to parameter scale ### 
   

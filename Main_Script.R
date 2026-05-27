@@ -856,25 +856,27 @@ print(table_comparison2, type="latex",
 inits <- function(){
   list(
     # group level mean
-    mu.log.a = log(.5) ,
-    mu.log.t = log(.1) ,
-    mu.probit.z = 0 ,
-    mu.log.v = c(log(3), log(3)) ,
+    mu.log.a = rnorm(1, log(.5), .1) ,
+    mu.log.t = rnorm(1, log(.1), .01) ,
+    mu.probit.z = rnorm(1, qnorm(.5), .1) ,
+    mu.log.v = rnorm(2, log(3), .1) ,
+    
+    # across trial variability
+    # log.st =  rnorm(1, log(.06), .01) ,
     
     # group level standard deviation
-    sigma.log.a = .1 ,
-    #sigma.probit.t = .5  , 
-    sigma.log.t = log(1.05) ,
-    sigma.probit.z = .5 ,
-    sigma.log.v = c(.2, .2)
-    )
+    sigma.log.a = rbeta(1, 1, 10) ,
+    sigma.log.t = rbeta(1, 1, 10) , 
+    sigma.probit.z = rbeta(1, 1, 10) ,
+    sigma.log.v = rbeta(2, 1, 10)
+  )
 }
 
 parameters <- c('a', 'mu.log.a', 'sigma.log.a', 'mu.a', 'simple.a', # upper threshold (boundary separation)
                 't', 'mu.log.t', 'sigma.log.t', 'mu.t', 'simple.t',
+                #'st', 
                 'z', 'mu.probit.z', 'sigma.probit.z', 'mu.z', 'simple.z',
-                'v', 'mu.log.v', 'sigma.log.v', 'mu.v', 'simple.v'
-                )
+                'v', 'mu.log.v', 'sigma.log.v', 'mu.v', 'simple.v')
 
 sets <- expand_grid(group=unique(f18_dat$group),
                     task=unique(f18_dat$task))
@@ -891,9 +893,9 @@ for(i in seq_len(nrow(sets))){
                        model.file=Fish_ddm_model ,
                        n.chains = 6 ,
                        n.cluster= 6 , 
-                       n.iter = 1000, 
-                       n.burnin = 500 , 
-                       n.thin = 2 , 
+                       n.iter = 35000, 
+                       n.burnin = 5000 , 
+                       n.thin = 10 , 
                        jags.module = c('wiener')
                        )
   res <- list(samples=res$BUGSoutput$sims.array,
@@ -939,8 +941,6 @@ for(i in seq_len(nrow(sets))){
            task=task)
   }
 
-## 2. Compare means between groups in both tasks                    ----
-
 
 all_summaries_df <- bind_rows(all_summaries) |> 
   mutate(Statistic = ifelse(grepl("sigma", parname), "Variability","Mean"),
@@ -950,7 +950,17 @@ all_summaries_df <- bind_rows(all_summaries) |>
          Parameter = sub("sigma.log.", "", sub("simple.", "", sub("mu.", "", sub("sigma.probit.","", parname)))),
          Parameter = factor(Parameter, 
                             levels= c("a", "z", "v[1]", "v[2]", "t"),
-                            labels= c("a", "z", "v_odd", "v_std", "t"))) 
+                            labels= c("a", "z", "v^'-'", "v^'+'", "t"))) 
+
+
+all_samples_df <- bind_rows(all_samples) |> 
+  select(group, task, starts_with("mu") | starts_with("simple")) |> 
+  select(!(starts_with("mu.log") | starts_with("mu.probit")))
+
+
+## 2. Compare means between groups in both tasks  ----
+
+### 2.1 Plot ----
 
 pd <- position_dodge(width=0.4)
 all_summaries_df |> 
@@ -965,161 +975,154 @@ all_summaries_df |>
              labeller = label_parsed, nrow=2)+
   custom_theme
 
+ggsave("figures/DDM_Comparison.eps",
+       width = 17.62, height=9/0.6, units="cm",dpi=600, device = cairo_ps)
+ggsave("figures/DDM_Comparison.png",
+       width = 17.62, height=9/0.6, units="cm",dpi=900)
 
-diff_CP <- bind_rows(all_samples) |> 
-  select(group, task, starts_with("mu") | starts_with("simple")) |> 
-  select(!(starts_with("mu.log") | starts_with("mu.probit"))) |> 
-  mutate(sample=row_number(), .by=c(group, task)) |> 
-  pivot_wider(
-    id_cols = c(task, sample),
-    names_from = group,
-    values_from = -c(group, task, sample),
-    names_glue = "{.value}_{group}"
-  ) |> # continue here
+# diff_CP <- bind_rows(all_samples) |> 
+#   select(group, task, starts_with("mu") | starts_with("simple")) |> 
+#   select(!(starts_with("mu.log") | starts_with("mu.probit"))) |> 
+#   mutate(sample=row_number(), .by=c(group, task)) |> 
+#   pivot_wider(
+#     id_cols = c(task, sample),
+#     names_from = group,
+#     values_from = -c(group, task, sample),
+#     names_glue = "{.value}_{group}"
+#   ) |> # continue here
+#   mutate(
+#     mu.a.control.patient = mu.a_control - mu.a_patient , 
+#     mu.z.control.patient = mu.z_control - mu.z_patient , 
+#     mu.v1.control.patient = `mu.v[1]_control` - `mu.v[1]_patient` , 
+#     mu.v2.control.patient = `mu.v[2]_control` - `mu.v[2]_patient` ,
+#     mu.t.control.patient = `mu.t_control` - `mu.t_patient` ,
+#     simple.a.control.patient = simple.a_control - simple.a_patient , 
+#     simple.z.control.patient = simple.z_control - simple.z_patient , 
+#     simple.v1.control.patient = `simple.v[1]_control` - `simple.v[1]_patient` , 
+#     simple.v2.control.patient = `simple.v[2]_control` - `simple.v[2]_patient` ,
+#     simple.t.control.patient = simple.t_control - simple.t_patient) |>
+#   select(task, sample, 
+#          mu.a.control.patient, mu.z.control.patient, mu.v1.control.patient, mu.v2.control.patient, mu.t.control.patient,
+#          simple.a.control.patient, simple.z.control.patient, simple.v1.control.patient, simple.v2.control.patient, simple.t.control.patient
+#   ) |> 
+#   pivot_longer(cols = mu.a.control.patient:simple.t.control.patient, 
+#                names_to = "comparison", values_to = "value") |> 
+#   separate(
+#     comparison,
+#     into = c("Computation", "Parameter", NA),
+#     sep = "\\."
+#   ) |> 
+#   mutate(Computation = if_else(Computation=="mu", 'Correct', 'Incorrect'))
+# 
+# 
+# diff_CP |> 
+#   mutate(value=if_else(Parameter=='v1', -value, value)) |> 
+#   filter(task==1) |> 
+#   ggplot(aes(x=value, color=Computation))+
+#   scale_color_manual(name="",values=three_colors_trafovar)+
+#   geom_density(linewidth=1.5)+
+#   geom_vline(xintercept = 0, linetype="dashed", linewidth=1) + 
+#   labs(x="Posterior Difference", 
+#        y="Density",
+#        color="Computation",
+#        title="Differences in Parameter Estimates between Controls and Patients") +
+#   facet_wrap(~Parameter, scales = "free",
+#              labeller = label_parsed, nrow=2)+
+#   custom_theme
+
+
+### 2.2. Table ---- 
+
+DDM_samples_long <- all_samples_df |> 
+  pivot_longer(cols = -c(group, task), names_to = "parname", values_to = "samples") |>
+  mutate(Computation = ifelse(grepl("mu", parname), "Correct", "Incorrect"),
+         Parameter = sub("mu.", "", sub("simple.", "", parname)),
+         Parameter = factor(Parameter,
+                            levels = c("a", "z", "v[2]", "v[1]", "t"),
+                            labels = c("a", "z", "v^'+'", "v^'-'", "t")))
+
+
+summary_differences_1 <- DDM_samples_long |>
+  filter(task == 1) |> 
+  group_by(Parameter, Computation, group) |> 
+  mutate(N = row_number()) |> 
+  ungroup() |> 
+  pivot_wider(id_cols = c(Parameter, Computation, N),
+              values_from = samples, names_from = group) |>
+  mutate(diff_control_patient  = control - patient,
+         diff_control_relative = control - relative) |>
+  pivot_longer(cols = c(diff_control_patient, diff_control_relative), 
+               names_to = "comparison", values_to = "diff") |>
+  mutate(comparison = recode(comparison,
+                             diff_control_patient  = "(Control-Patient)",
+                             diff_control_relative = "(Control-Relative)")) |>
+  group_by(Parameter, Computation, comparison) |> 
+  reframe(Lower = quantile(diff, 0.025),
+          Upper = quantile(diff, 0.975),
+          value = paste0(format(round(mean(diff), 2), nsmall = 2) , " [" ,
+                         format(round(Lower, 2), nsmall = 2) , ", " ,
+                         format(round(Upper, 2), nsmall = 2) , "]")) |>
+  mutate(bold = Lower > 0 | Upper < 0,
+         value = ifelse(bold, paste0("\\textbf{", value, "}"), value)) |>
+  select(-Lower, -Upper, -bold) |> 
+  rename(group = comparison)
+
+
+table_comparison_DDM_1 <- all_summaries_df |>
+  filter(!grepl("sigma", parname)) |> 
   mutate(
-    mu.a.control.patient = mu.a_control - mu.a_patient , 
-    mu.z.control.patient = mu.z_control - mu.z_patient , 
-    mu.v1.control.patient = `mu.v[1]_control` - `mu.v[1]_patient` , 
-    mu.v2.control.patient = `mu.v[2]_control` - `mu.v[2]_patient` ,
-    mu.t.control.patient = `mu.t_control` - `mu.t_patient` ,
-    simple.a.control.patient = simple.a_control - simple.a_patient , 
-    simple.z.control.patient = simple.z_control - simple.z_patient , 
-    simple.v1.control.patient = `simple.v[1]_control` - `simple.v[1]_patient` , 
-    simple.v2.control.patient = `simple.v[2]_control` - `simple.v[2]_patient` ,
-    simple.t.control.patient = simple.t_control - simple.t_patient) |>
-  select(task, sample, 
-         mu.a.control.patient, mu.z.control.patient, mu.v1.control.patient, mu.v2.control.patient, mu.t.control.patient,
-         simple.a.control.patient, simple.z.control.patient, simple.v1.control.patient, simple.v2.control.patient, simple.t.control.patient
-  ) |> 
-  pivot_longer(cols = mu.a.control.patient:simple.t.control.patient, 
-               names_to = "comparison", values_to = "value") |> 
-  separate(
-    comparison,
-    into = c("Computation", "Parameter", NA),
-    sep = "\\."
-  ) |> 
-  mutate(Computation = if_else(Computation=="mu", 'Correct', 'Incorrect'))
+    Computation = sub(" Mean", "", as.character(Computation)) ,
+    value = paste0(format(round(mean, 2), nsmall = 2), " [",
+                   format(round(`2.5%`, 2), nsmall = 2) ,", ",
+                   format(round(`97.5%`, 2), nsmall = 2), "]")) |> 
+  filter(task == 1 & group %in% c("control", "relative", "patient")) |> 
+  select(group, Parameter, Computation, value) |> 
+  bind_rows(summary_differences_1) |> 
+  mutate(Parameter = factor(Parameter,
+                            levels = c("a", "z", "v^'+'", "v^'-'", "t"),
+                            labels = c("a", "z", "$v^+$", "$v^-$", "t"))) |> 
+  select(Parameter, Computation, group, value) |> 
+  pivot_wider(names_from = group) |> 
+  arrange(Parameter, Computation) |> 
+  group_by(Parameter) |> 
+  mutate(Parameter = c(paste0("\\multirow{2}{*}{", Parameter[1], "}"), "")) |> 
+  ungroup() |> 
+  mutate(Computation = as.character(Computation)) |>
+  rename(Comp. = Computation,
+         Param. = Parameter, 
+         Control = control,
+         Patient = patient,
+         Relative = relative
+         )
 
+table_comparison_DDM_1 <- xtable(table_comparison_DDM_1,
+                                 align = c("l", "l", "l", "|","c", "c", "c", "|","c", "c"),
+                                 label = "tab:DDM",
+                                 caption = paste0("\\raggedright Posterior mean and 95\\% CI ",
+                                                  "for the group-level means of the DDM ",
+                                                  "parameters for the ",
+                                                  "\\textcite{fish2018psychiatry_research} ",
+                                                  "data as well as posterior differences ",
+                                                  "between controls and patients and ",
+                                                  "between controls and relatives. ",
+                                                  "Credible clinical differences are in bold."))
 
-diff_CP |> 
-  mutate(value=if_else(Parameter=='v1', -value, value)) |> 
-  filter(task==1) |> 
-  ggplot(aes(x=value, color=Computation))+
-  scale_color_manual(name="",values=three_colors_trafovar)+
-  geom_density(linewidth=1.5)+
-  geom_vline(xintercept = 0, linetype="dashed", linewidth=1) + 
-  labs(x="Posterior Difference", 
-       y="Density",
-       color="Computation",
-       title="Differences in Parameter Estimates between Controls and Patients") +
-  facet_wrap(~Parameter, scales = "free",
-             labeller = label_parsed, nrow=2)+
-  custom_theme
+addtorow <- list()
+addtorow$pos <- list(c(-1), c(2, 4, 6, 8, 10))
+addtorow$command <- c(paste0("&&\\multicolumn{3}{|c|}{Groups}",
+                             "&\\multicolumn{2}{c}{Differences} \\\\"),
+                      "\\midrule")
 
-
-diff_RP <- bind_rows(all_samples) |> 
-  select(group, task, starts_with("mu") | starts_with("simple")) |> 
-  select(!(starts_with("mu.log") | starts_with("mu.probit"))) |> 
-  mutate(sample=row_number(), .by=c(group, task),
-  ) |> 
-  pivot_wider(
-    id_cols = c(task, sample),
-    names_from = group,
-    values_from = -c(group, task, sample),
-    names_glue = "{.value}_{group}"
-  ) |> # continue here
-  mutate(
-    mu.a.relative.patient = mu.a_relative - mu.a_patient , 
-    mu.z.relative.patient = mu.z_relative - mu.z_patient , 
-    mu.v1.relative.patient = `mu.v[1]_relative` - `mu.v[1]_patient` , 
-    mu.v2.relative.patient = `mu.v[2]_relative` - `mu.v[2]_patient` ,
-    mu.t.relative.patient = `mu.t_relative` - `mu.t_patient` ,
-    simple.a.relative.patient = simple.a_relative - simple.a_patient , 
-    simple.z.relative.patient = simple.z_relative - simple.z_patient , 
-    simple.v1.relative.patient = `simple.v[1]_relative` - `simple.v[1]_patient` , 
-    simple.v2.relative.patient = `simple.v[2]_relative` - `simple.v[2]_patient` ,
-    simple.t.relative.patient = simple.t_relative - simple.t_patient) |>
-  select(task, sample, 
-         mu.a.relative.patient, mu.z.relative.patient, mu.v1.relative.patient, mu.v2.relative.patient, mu.t.relative.patient,
-         simple.a.relative.patient, simple.z.relative.patient, simple.v1.relative.patient, simple.v2.relative.patient, simple.t.relative.patient
-  ) |> 
-  pivot_longer(cols = mu.a.relative.patient:simple.t.relative.patient, 
-               names_to = "comparison", values_to = "value") |> 
-  separate(
-    comparison,
-    into = c("Computation", "Parameter", NA),
-    sep = "\\."
-  ) |> 
-  mutate(Computation = if_else(Computation=="mu", 'Correct', 'Incorrect'))
-
-
-diff_RP |> 
-  mutate(value=if_else(Parameter=='v1', -value, value)) |> 
-  filter(task==1) |> 
-  ggplot(aes(x=value, color=Computation))+
-  scale_color_manual(name="",values=three_colors_trafovar)+
-  geom_density(linewidth=1.5)+
-  geom_vline(xintercept = 0, linetype="dashed", linewidth=1) + 
-  labs(x="Posterior Difference", 
-       y="Density",
-       color="Computation",
-       title="Differences in Parameter Estimates between Relatives and Patients") +
-  facet_wrap(~Parameter, scales = "free",
-             labeller = label_parsed, nrow=2)+
-  custom_theme
-
-
-
-diff_CR <- bind_rows(all_samples) |> 
-  select(group, task, starts_with("mu") | starts_with("simple")) |> 
-  select(!(starts_with("mu.log") | starts_with("mu.probit"))) |> 
-  mutate(sample=row_number(), .by=c(group, task)) |> 
-  pivot_wider(
-    id_cols = c(task, sample),
-    names_from = group,
-    values_from = -c(group, task, sample),
-    names_glue = "{.value}_{group}"
-  ) |> # continue here
-  mutate(
-    mu.a.control.relative = mu.a_control - mu.a_relative , 
-    mu.z.control.relative = mu.z_control - mu.z_relative , 
-    mu.v1.control.relative = `mu.v[1]_control` - `mu.v[1]_relative` , 
-    mu.v2.control.relative = `mu.v[2]_control` - `mu.v[2]_relative` ,
-    mu.t.control.relative = `mu.t_control` - `mu.t_relative` ,
-    simple.a.control.relative = simple.a_control - simple.a_relative , 
-    simple.z.control.relative = simple.z_control - simple.z_relative , 
-    simple.v1.control.relative = `simple.v[1]_control` - `simple.v[1]_relative` , 
-    simple.v2.control.relative = `simple.v[2]_control` - `simple.v[2]_relative` ,
-    simple.t.control.relative = simple.t_control - simple.t_relative) |>
-  select(task, sample, 
-         mu.a.control.relative, mu.z.control.relative, mu.v1.control.relative, mu.v2.control.relative, mu.t.control.relative,
-         simple.a.control.relative, simple.z.control.relative, simple.v1.control.relative, simple.v2.control.relative, simple.t.control.relative
-  ) |> 
-  pivot_longer(cols = mu.a.control.relative:simple.t.control.relative, 
-               names_to = "comparison", values_to = "value") |> 
-  separate(
-    comparison,
-    into = c("Computation", "Parameter", NA),
-    sep = "\\."
-  ) |> 
-  mutate(Computation = if_else(Computation=="mu", 'Correct', 'Incorrect'))
-
-diff_CR |> 
-  mutate(value=if_else(Parameter=='v1', -value, value)) |> 
-  filter(task==1) |> 
-  ggplot(aes(x=value, color=Computation))+
-  scale_color_manual(name="",values=three_colors_trafovar)+
-  geom_density(linewidth=1.5)+
-  geom_vline(xintercept = 0, linetype="dashed", linewidth=1) + 
-  labs(x="Posterior Difference", 
-       y="Density",
-       color="Computation",
-       title="Differences in Parameter Estimates between Controls and Relatives") +
-  facet_wrap(~Parameter, scales = "free",
-             labeller = label_parsed, nrow=2)+
-  custom_theme
-
-
+print(table_comparison_DDM_1, type = "latex" ,
+      file = "figures/TableDDMComparison.tex" , 
+      sanitize.text.function = function(x){x} ,
+      include.rownames = FALSE ,
+      add.to.row = addtorow ,
+      hline.after = c(0, nrow(table_comparison_DDM_1)) ,
+      booktabs = TRUE ,
+      caption.placement = "top" , 
+      label = "tab:DDM",
+      table.placement = "hp")
 
 #___________________________________________________________________----
 #_______                 For Supplement                     ________----
