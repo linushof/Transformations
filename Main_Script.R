@@ -32,15 +32,20 @@ REDOALLANALYSIS <- FALSE
 # D  Re-doing age difference analysis in Pachur et al (2017)  ______
 #___________________________________________________________________
 ## 1. Fit the hierarchical CPT-model                                
-## 2. Compare means between young and old                           
+## 2. Compare means between young and old 
+#___________________________________________________________________
+# E  Re-doing DDM analysis in Fish et al (2018)  ______
+#___________________________________________________________________
+## 1. Fit hierarchical DDM                                
+## 2. Compare means between groups in both tasks            
 #___________________________________________________________________
 #_______                 For Supplement                     ________
 #___________________________________________________________________
-# E  Refitting Rieskamp-data with original model                    
+# F  Refitting Rieskamp-data with original model                    
 ## 1. Fit the hierarchical CPT-model                                
 ## 2. Compare population means between transformations              
 #___________________________________________________________________
-# F  Re-do (Extended) original simulation study (unconstrained)     
+# G  Re-do (Extended) original simulation study (unconstrained)     
 ## 1. Actual parameter recovery analysis                            
 ## 2. Visualize original full parameter recovery analysis           
 
@@ -64,16 +69,16 @@ print(getwd())
 {
   # Tell Rstudio where to find JAGS
   #Sys.setenv(JAGS_HOME = "C:/Users/go73jec/AppData/Local/Programs/JAGS/JAGS-4.3.1")
-  library(tidyverse)
-  library(R2jags)
-  library(ggpubr)
-  library(viridis)
-  library(ggh4x)
-  library(cowplot)
-  library(tensr)
-  library(readxl)
-  library(kableExtra)# For the first table of posteriors
-  library(xtable)    # For the second table of posteriors
+  pacman::p_load(tidyverse, 
+                 R2jags,
+                 ggpubr,
+                 viridis,
+                 ggh4x,
+                 cowplot,
+                 tensr,
+                 readxl,
+                 kableExtra, # For the first table of posteriors
+                 xtable)    # For the second table of posteriors
   source('helper_fcts/custom_theme.R') # import custom ggplot theme
   dir.create("figures", showWarnings = FALSE)
   dir.create("saved_details", showWarnings = FALSE)
@@ -90,6 +95,8 @@ original_full_model_recovery <- "jags_models/cpt_hierarchical_recovery.txt"
 original_restricted_model_recovery <- "jags_models/cpt_hierarchical_restricted_recovery.txt"
 
 Pachur_age_model <- "jags_models/cpt_hierarchical_age_model.txt"
+
+Fish_ddm_model <- "jags_models/ddm_hierarchical_transformations.txt"
 
 
 ## Generate Figure 1 and 2 for the theoretical part
@@ -178,7 +185,7 @@ age_data <- read_xlsx("data/PachurEtAl_Who errs, who dares_Data.xlsx",
                       sheet = "Data", 
                       range="A1:B12811" # include to omit the NA warnings for Speed
                       )
-age_data <- age_data %>% 
+age_data <-age_data %>% 
   select(sbj=Subject, group=Age_group) %>%
   distinct()
 young_choices <- all_choices[,{
@@ -190,8 +197,73 @@ older_choices <- all_choices[,{
 
 age_data <- list("lotteries_a", "lotteries_b", "age_choices", "N_parts")
 
+## 3. Fish et al. (2018) DDM data                                  ----
 
+if(!file.exists("data/Fish_2018/fish_2018.csv")){
+  f18_files <- list.files(path = "data/Fish_2018/raw", 
+                        pattern = "\\.dat$", 
+                        full.names=T, 
+                        recursive=T, 
+                        include.dirs=T)
+  fname <- basename(f18_files)
+  f18_dat <- map(f18_files, read.delim2, header=F) |> 
+    imap(\(part, i) part |>
+           mutate(
+             group = sub(".*/(control|patient|relative)/.*", "\\1", f18_files[i]) , 
+             ID = sub("^([0-9]{4}).*", "\\1", fname[i]) , 
+             task = sub("^[0-9]{4}_?([0-9])B.*", "\\1", fname[i]) , 
+             block = sub(".*([ABC])\\.dat$", "\\1", fname[i]) ,
+             V3=as.numeric(V3)
+             )
+         ) |> 
+    bind_rows() |>
+    group_by(ID, task, block) |> 
+    mutate(block_trial=row_number()) |>  
+    ungroup(block) |>
+    mutate(overall_trial=row_number()) |> 
+    ungroup() |> 
+    rename(cond=V1 , 
+           resp=V2 ,
+           rt=V3
+    ) |> 
+    select(task, group, ID, block, block_trial, overall_trial, cond, resp, rt)
+  write_csv(f18_dat,"data/Fish_2018/fish_2018.csv")
+}
 
+f18_dat <- read_csv("data/Fish_2018/fish_2018.csv") |> 
+  filter(!rt<.120) |> # exclude trials faster than 120 ms
+  mutate(resp_uni=if_else(resp==0, -rt, rt))
+
+make_hddm_JAGS_data <- function(data, group_name, nback){
+  # group filter
+  dat_sub <- f18_dat |> filter(group==group_name & task==nback)
+  # responses
+  resp_uni <- dat_sub |> 
+    select(ID, overall_trial, resp_uni) |> 
+    pivot_wider(names_from = ID, values_from = resp_uni) |> 
+    select(-overall_trial)
+  # trial numbers
+  Ntrial <- dat_sub |> 
+    group_by(ID) |> 
+    summarize(Ntrial=n()) |> 
+    pull(Ntrial)
+  # condition
+  cond <- dat_sub |> 
+    select(ID, overall_trial, cond) |> 
+    mutate(cond=cond+1) |> 
+    pivot_wider(names_from = ID, values_from = cond) |> 
+    select(-overall_trial) 
+  # number of subjects
+  Nsub <- length(unique(dat_sub$ID)) 
+  # put in JAGS list
+  hDDM_dat <- list(
+    Nsub=length(unique(dat_sub$ID)),
+    Ntrial=Ntrial,
+    cond = as.matrix(cond),
+    resp_uni=as.matrix(resp_uni)
+    )
+  return(hDDM_dat)
+}
 
 #___________________________________________________________________----
 #______    Re-doing analysis of Nilsson et al (2011)       _________----
@@ -776,9 +848,286 @@ print(table_comparison2, type="latex",
 # p_group_comparison
 
 #___________________________________________________________________----
+# E  Re-doing DDM analysis in Fish et al (2018)  ______----
+#___________________________________________________________________----
+## 1. Fit hierarchical DDM ----
+
+# set initial values on transformed scales
+inits <- function(){
+  list(
+    # group level mean
+    mu.log.a = rnorm(1, log(.5), .1) ,
+    mu.log.t = rnorm(1, log(.1), .01) ,
+    mu.probit.z = rnorm(1, qnorm(.5), .1) ,
+    mu.log.v = rnorm(2, log(3), .1) ,
+    
+    # across trial variability
+    # log.st =  rnorm(1, log(.06), .01) ,
+    
+    # group level standard deviation
+    sigma.log.a = rbeta(1, 1, 10) ,
+    sigma.log.t = rbeta(1, 1, 10) , 
+    sigma.probit.z = rbeta(1, 1, 10) ,
+    sigma.log.v = rbeta(2, 1, 10)
+  )
+}
+
+parameters <- c('a', 'mu.log.a', 'sigma.log.a', 'mu.a', 'simple.a', # upper threshold (boundary separation)
+                't', 'mu.log.t', 'sigma.log.t', 'mu.t', 'simple.t',
+                #'st', 
+                'z', 'mu.probit.z', 'sigma.probit.z', 'mu.z', 'simple.z',
+                'v', 'mu.log.v', 'sigma.log.v', 'mu.v', 'simple.v')
+
+sets <- expand_grid(group=unique(f18_dat$group),
+                    task=unique(f18_dat$task))
+
+for(i in seq_len(nrow(sets))){
+
+  group <- sets[[i,'group']]
+  task <- sets[[i,'task']]
+  hDDM_dat <- make_hddm_JAGS_data(f18_dat, group_name=group, nback=task)
+  
+  res <- jags.parallel(data=hDDM_dat ,
+                       inits=inits ,
+                       parameters.to.save=parameters ,
+                       model.file=Fish_ddm_model ,
+                       n.chains = 6 ,
+                       n.cluster= 6 , 
+                       n.iter = 35000, 
+                       n.burnin = 5000 , 
+                       n.thin = 10 , 
+                       jags.module = c('wiener')
+                       )
+  res <- list(samples=res$BUGSoutput$sims.array,
+              summaries=res$BUGSoutput$summary)
+  filename <- paste0("saved_details/Refitted_FishDDM_Data_",as.character(task),"_", group,".RData")
+  save(res,file=filename)
+  print(paste("Group:", group, ", Task:", as.character(task), "fitted."))
+}
+
+
+plot_parameters <- c("mu.a",   "simple.a",
+                     "mu.t",   "simple.t",
+                     "mu.z", "simple.z",
+                     "mu.v[1]", "simple.v[1]",
+                     "mu.v[2]", "simple.v[2]", 
+                     "sigma.log.a", "sigma.log.t" , 
+                     "sigma.probit.z" , 
+                     "sigma.log.v[1]", "sigma.log.v[2]"
+)
+
+all_summaries <- vector('list', length=nrow(sets))
+all_samples <- vector('list', length=nrow(sets))
+
+for(i in seq_len(nrow(sets))){
+  
+  group <- sets[[i,'group']]
+  task <- sets[[i,'task']]
+  filename <- paste0("saved_details/Refitted_FishDDM_Data_",as.character(task),"_", group,".RData")
+  load(filename)
+                
+  all_summaries[[i]] <- cbind(as_tibble(res$summaries[plot_parameters,c("mean", "50%", "2.5%", "97.5%")]), 
+                              group=group, task=task , parname = plot_parameters)
+  
+  
+  dims <- dim(res$samples)
+  params <- dimnames(res$samples)[[3]]
+  dim(res$samples) <- c(dims[1]*dims[2], dims[3])
+  df_samples <- as.data.frame(res$samples)
+  names(df_samples) <- params
+  
+  all_samples[[i]] <- df_samples |> 
+    mutate(group=group ,
+           task=task)
+  }
+
+
+all_summaries_df <- bind_rows(all_summaries) |> 
+  mutate(Statistic = ifelse(grepl("sigma", parname), "Variability","Mean"),
+         Computation = ifelse(Statistic=="Variability", "Variability", 
+                              ifelse(grepl("mu", parname), "Correct Mean", "Incorrect Mean")), 
+         Computation = factor(Computation, levels=c("Incorrect Mean", "Correct Mean", "Variability")) ,
+         Parameter = sub("sigma.log.", "", sub("simple.", "", sub("mu.", "", sub("sigma.probit.","", parname)))),
+         Parameter = factor(Parameter, 
+                            levels= c("a", "z", "v[1]", "v[2]", "t"),
+                            labels= c("a", "z", "v^'-'", "v^'+'", "t"))) 
+
+
+all_samples_df <- bind_rows(all_samples) |> 
+  select(group, task, starts_with("mu") | starts_with("simple")) |> 
+  select(!(starts_with("mu.log") | starts_with("mu.probit")))
+
+
+## 2. Compare means between groups in both tasks  ----
+
+### 2.1 Plot ----
+
+pd <- position_dodge(width=0.4)
+all_summaries_df |> 
+  filter(task==1) |> 
+  ggplot(aes(x=group, color=Computation, shape=group))+
+  scale_color_manual(name="",values=three_colors_trafovar)+
+  geom_point(aes(y=mean), size=3, position=pd)+
+  scale_x_discrete(labels = scales::parse_format())+
+  ylab("Posterior mean (95%CI)")+guides(shape="none")+
+  geom_errorbar(aes(ymin=`2.5%`, ymax=`97.5%`), position=pd, width=0.2)+
+  facet_wrap(~Parameter, scales = "free",
+             labeller = label_parsed, nrow=2)+
+  custom_theme
+
+ggsave("figures/DDM_Comparison.eps",
+       width = 17.62, height=9/0.6, units="cm",dpi=600, device = cairo_ps)
+ggsave("figures/DDM_Comparison.png",
+       width = 17.62, height=9/0.6, units="cm",dpi=900)
+
+# diff_CP <- bind_rows(all_samples) |> 
+#   select(group, task, starts_with("mu") | starts_with("simple")) |> 
+#   select(!(starts_with("mu.log") | starts_with("mu.probit"))) |> 
+#   mutate(sample=row_number(), .by=c(group, task)) |> 
+#   pivot_wider(
+#     id_cols = c(task, sample),
+#     names_from = group,
+#     values_from = -c(group, task, sample),
+#     names_glue = "{.value}_{group}"
+#   ) |> # continue here
+#   mutate(
+#     mu.a.control.patient = mu.a_control - mu.a_patient , 
+#     mu.z.control.patient = mu.z_control - mu.z_patient , 
+#     mu.v1.control.patient = `mu.v[1]_control` - `mu.v[1]_patient` , 
+#     mu.v2.control.patient = `mu.v[2]_control` - `mu.v[2]_patient` ,
+#     mu.t.control.patient = `mu.t_control` - `mu.t_patient` ,
+#     simple.a.control.patient = simple.a_control - simple.a_patient , 
+#     simple.z.control.patient = simple.z_control - simple.z_patient , 
+#     simple.v1.control.patient = `simple.v[1]_control` - `simple.v[1]_patient` , 
+#     simple.v2.control.patient = `simple.v[2]_control` - `simple.v[2]_patient` ,
+#     simple.t.control.patient = simple.t_control - simple.t_patient) |>
+#   select(task, sample, 
+#          mu.a.control.patient, mu.z.control.patient, mu.v1.control.patient, mu.v2.control.patient, mu.t.control.patient,
+#          simple.a.control.patient, simple.z.control.patient, simple.v1.control.patient, simple.v2.control.patient, simple.t.control.patient
+#   ) |> 
+#   pivot_longer(cols = mu.a.control.patient:simple.t.control.patient, 
+#                names_to = "comparison", values_to = "value") |> 
+#   separate(
+#     comparison,
+#     into = c("Computation", "Parameter", NA),
+#     sep = "\\."
+#   ) |> 
+#   mutate(Computation = if_else(Computation=="mu", 'Correct', 'Incorrect'))
+# 
+# 
+# diff_CP |> 
+#   mutate(value=if_else(Parameter=='v1', -value, value)) |> 
+#   filter(task==1) |> 
+#   ggplot(aes(x=value, color=Computation))+
+#   scale_color_manual(name="",values=three_colors_trafovar)+
+#   geom_density(linewidth=1.5)+
+#   geom_vline(xintercept = 0, linetype="dashed", linewidth=1) + 
+#   labs(x="Posterior Difference", 
+#        y="Density",
+#        color="Computation",
+#        title="Differences in Parameter Estimates between Controls and Patients") +
+#   facet_wrap(~Parameter, scales = "free",
+#              labeller = label_parsed, nrow=2)+
+#   custom_theme
+
+
+### 2.2. Table ---- 
+
+DDM_samples_long <- all_samples_df |> 
+  pivot_longer(cols = -c(group, task), names_to = "parname", values_to = "samples") |>
+  mutate(Computation = ifelse(grepl("mu", parname), "Correct", "Incorrect"),
+         Parameter = sub("mu.", "", sub("simple.", "", parname)),
+         Parameter = factor(Parameter,
+                            levels = c("a", "z", "v[2]", "v[1]", "t"),
+                            labels = c("a", "z", "v^'+'", "v^'-'", "t")))
+
+
+summary_differences_1 <- DDM_samples_long |>
+  filter(task == 1) |> 
+  group_by(Parameter, Computation, group) |> 
+  mutate(N = row_number()) |> 
+  ungroup() |> 
+  pivot_wider(id_cols = c(Parameter, Computation, N),
+              values_from = samples, names_from = group) |>
+  mutate(diff_control_patient  = control - patient,
+         diff_control_relative = control - relative) |>
+  pivot_longer(cols = c(diff_control_patient, diff_control_relative), 
+               names_to = "comparison", values_to = "diff") |>
+  mutate(comparison = recode(comparison,
+                             diff_control_patient  = "(Control-Patient)",
+                             diff_control_relative = "(Control-Relative)")) |>
+  group_by(Parameter, Computation, comparison) |> 
+  reframe(Lower = quantile(diff, 0.025),
+          Upper = quantile(diff, 0.975),
+          value = paste0(format(round(mean(diff), 2), nsmall = 2) , " [" ,
+                         format(round(Lower, 2), nsmall = 2) , ", " ,
+                         format(round(Upper, 2), nsmall = 2) , "]")) |>
+  mutate(bold = Lower > 0 | Upper < 0,
+         value = ifelse(bold, paste0("\\textbf{", value, "}"), value)) |>
+  select(-Lower, -Upper, -bold) |> 
+  rename(group = comparison)
+
+
+table_comparison_DDM_1 <- all_summaries_df |>
+  filter(!grepl("sigma", parname)) |> 
+  mutate(
+    Computation = sub(" Mean", "", as.character(Computation)) ,
+    value = paste0(format(round(mean, 2), nsmall = 2), " [",
+                   format(round(`2.5%`, 2), nsmall = 2) ,", ",
+                   format(round(`97.5%`, 2), nsmall = 2), "]")) |> 
+  filter(task == 1 & group %in% c("control", "relative", "patient")) |> 
+  select(group, Parameter, Computation, value) |> 
+  bind_rows(summary_differences_1) |> 
+  mutate(Parameter = factor(Parameter,
+                            levels = c("a", "z", "v^'+'", "v^'-'", "t"),
+                            labels = c("a", "z", "$v^+$", "$v^-$", "t"))) |> 
+  select(Parameter, Computation, group, value) |> 
+  pivot_wider(names_from = group) |> 
+  arrange(Parameter, Computation) |> 
+  group_by(Parameter) |> 
+  mutate(Parameter = c(paste0("\\multirow{2}{*}{", Parameter[1], "}"), "")) |> 
+  ungroup() |> 
+  mutate(Computation = as.character(Computation)) |>
+  rename(Comp. = Computation,
+         Param. = Parameter, 
+         Control = control,
+         Patient = patient,
+         Relative = relative
+         )
+
+table_comparison_DDM_1 <- xtable(table_comparison_DDM_1,
+                                 align = c("l", "l", "l", "|","c", "c", "c", "|","c", "c"),
+                                 label = "tab:DDM",
+                                 caption = paste0("\\raggedright Posterior mean and 95\\% CI ",
+                                                  "for the group-level means of the DDM ",
+                                                  "parameters for the ",
+                                                  "\\textcite{fish2018psychiatry_research} ",
+                                                  "data as well as posterior differences ",
+                                                  "between controls and patients and ",
+                                                  "between controls and relatives. ",
+                                                  "Credible clinical differences are in bold."))
+
+addtorow <- list()
+addtorow$pos <- list(c(-1), c(2, 4, 6, 8, 10))
+addtorow$command <- c(paste0("&&\\multicolumn{3}{|c|}{Groups}",
+                             "&\\multicolumn{2}{c}{Differences} \\\\"),
+                      "\\midrule")
+
+print(table_comparison_DDM_1, type = "latex" ,
+      file = "figures/TableDDMComparison.tex" , 
+      sanitize.text.function = function(x){x} ,
+      include.rownames = FALSE ,
+      add.to.row = addtorow ,
+      hline.after = c(0, nrow(table_comparison_DDM_1)) ,
+      booktabs = TRUE ,
+      caption.placement = "top" , 
+      label = "tab:DDM",
+      table.placement = "hp")
+
+#___________________________________________________________________----
 #_______                 For Supplement                     ________----
 #___________________________________________________________________----
-# E  Refitting Rieskamp-data with original model                    ----
+# F  Refitting Rieskamp-data with original model                    ----
 ## 1. Fit the hierarchical CPT-model                                ----
 
 # Define initial values for parameters 
@@ -844,7 +1193,7 @@ ggsave("figures/Rieskamp_Original.png",
        width = 17.62, height=9/0.7, units="cm",dpi=900)
 
 #___________________________________________________________________----
-# F  Re-do (Extended) original simulation study (unconstrained)     ----
+# G  Re-do (Extended) original simulation study (unconstrained)     ----
 
 ## 1. Actual parameter recovery analysis                            ----
 
