@@ -208,7 +208,8 @@ if(!file.exists("data/Fish_2018/fish_2018.csv")){
            resp=V2 ,
            rt=V3
     ) |> 
-    select(task, group, ID, block, block_trial, overall_trial, cond, resp, rt)
+    select(task, group, ID, block, block_trial, overall_trial, cond, resp, rt) |> 
+    filter(!(group=='relative' | task==0))
   write_csv(f18_dat,"data/Fish_2018/fish_2018.csv")
 }
 
@@ -800,30 +801,32 @@ parameters <- c('a', 'mu.log.a', 'sigma.log.a', 'mu.a', 'simple.a', # upper thre
 sets <- expand_grid(group=unique(f18_dat$group),
                     task=unique(f18_dat$task))
 
-for(i in seq_len(nrow(sets))){
+if (!(file.exists("saved_details/Refitted_FishDDM_Data_1_control.RData") &  
+      file.exists("saved_details/Refitted_FishDDM_Data_1_patient.RData"))){
+  for(i in seq_len(nrow(sets))){
 
-  group <- sets[[i,'group']]
-  task <- sets[[i,'task']]
-  hDDM_dat <- make_hddm_JAGS_data(f18_dat, group_name=group, nback=task)
+    group <- sets[[i,'group']]
+    task <- sets[[i,'task']]
+    hDDM_dat <- make_hddm_JAGS_data(f18_dat, group_name=group, nback=task)
   
-  res <- jags.parallel(data=hDDM_dat ,
-                       inits=inits ,
-                       parameters.to.save=parameters ,
-                       model.file=Fish_ddm_model ,
-                       n.chains = 6 ,
-                       n.cluster= 6 , 
-                       n.iter = 35000, 
-                       n.burnin = 5000 , 
-                       n.thin = 10 , 
-                       jags.module = c('wiener')
-                       )
-  res <- list(samples=res$BUGSoutput$sims.array,
-              summaries=res$BUGSoutput$summary)
-  filename <- paste0("saved_details/Refitted_FishDDM_Data_",as.character(task),"_", group,".RData")
-  save(res,file=filename)
-  print(paste("Group:", group, ", Task:", as.character(task), "fitted."))
+    res <- jags.parallel(data=hDDM_dat ,
+                         inits=inits ,
+                         parameters.to.save=parameters ,
+                         model.file=Fish_ddm_model ,
+                         n.chains = 6 ,
+                         n.cluster= 6 , 
+                         n.iter = 35000, 
+                         n.burnin = 5000 , 
+                         n.thin = 10 , 
+                         jags.module = c('wiener')
+                         )
+    res <- list(samples=res$BUGSoutput$sims.array,
+                summaries=res$BUGSoutput$summary)
+    filename <- paste0("saved_details/Refitted_FishDDM_Data_",as.character(task),"_", group,".RData")
+    save(res,file=filename)
+    print(paste("Group:", group, ", Task:", as.character(task), "fitted."))
+  }
 }
-
 
 plot_parameters <- c("mu.a",   "simple.a",
                      "mu.t",   "simple.t",
@@ -860,7 +863,6 @@ for(i in seq_len(nrow(sets))){
            task=task)
   }
 
-
 all_summaries_df <- bind_rows(all_summaries) |> 
   mutate(Statistic = ifelse(grepl("sigma", parname), "Variability","Mean"),
          Computation = ifelse(Statistic=="Variability", "Variability", 
@@ -883,7 +885,7 @@ all_samples_df <- bind_rows(all_samples) |>
 
 pd <- position_dodge(width=0.4)
 all_summaries_df |> 
-  filter(task==1) |> 
+  #filter(task==1) |> 
   ggplot(aes(x=group, color=Computation, shape=group))+
   scale_color_manual(name="",values=three_colors_trafovar)+
   geom_point(aes(y=mean), size=3, position=pd)+
@@ -910,20 +912,18 @@ DDM_samples_long <- all_samples_df |>
                             labels = c("a", "z", "v^'+'", "v^'-'", "t")))
 
 
-summary_differences_1 <- DDM_samples_long |>
-  filter(task == 1) |> 
+summary_differences <- DDM_samples_long |>
+  #filter(task == 1) |> 
   group_by(Parameter, Computation, group) |> 
   mutate(N = row_number()) |> 
   ungroup() |> 
   pivot_wider(id_cols = c(Parameter, Computation, N),
               values_from = samples, names_from = group) |>
-  mutate(diff_control_patient  = control - patient,
-         diff_control_relative = control - relative) |>
-  pivot_longer(cols = c(diff_control_patient, diff_control_relative), 
+  mutate(diff_control_patient  = control - patient) |>
+  pivot_longer(cols = c(diff_control_patient), 
                names_to = "comparison", values_to = "diff") |>
   mutate(comparison = recode(comparison,
-                             diff_control_patient  = "(Control-Patient)",
-                             diff_control_relative = "(Control-Relative)")) |>
+                             diff_control_patient  = "(Control-Patient)")) |>
   group_by(Parameter, Computation, comparison) |> 
   reframe(Lower = quantile(diff, 0.025),
           Upper = quantile(diff, 0.975),
@@ -936,7 +936,7 @@ summary_differences_1 <- DDM_samples_long |>
   rename(group = comparison)
 
 
-table_comparison_DDM_1 <- all_summaries_df |>
+table_comparison_DDM <- all_summaries_df |>
   filter(!grepl("sigma", parname)) |> 
   mutate(
     Computation = sub(" Mean", "", as.character(Computation)) ,
@@ -945,7 +945,7 @@ table_comparison_DDM_1 <- all_summaries_df |>
                    format(round(`97.5%`, 2), nsmall = 2), "]")) |> 
   filter(task == 1 & group %in% c("control", "relative", "patient")) |> 
   select(group, Parameter, Computation, value) |> 
-  bind_rows(summary_differences_1) |> 
+  bind_rows(summary_differences) |> 
   mutate(Parameter = factor(Parameter,
                             levels = c("a", "z", "v^'+'", "v^'-'", "t"),
                             labels = c("a", "z", "$v^+$", "$v^-$", "t"))) |> 
@@ -959,29 +959,27 @@ table_comparison_DDM_1 <- all_summaries_df |>
   rename(Comp. = Computation,
          Param. = Parameter, 
          Control = control,
-         Patient = patient,
-         Relative = relative
+         Patient = patient
          )
 
-table_comparison_DDM_1 <- xtable(table_comparison_DDM_1,
-                                 align = c("l", "l", "l", "|","c", "c", "c", "|","c", "c"),
+table_comparison_DDM <- xtable(table_comparison_DDM,
+                                 align = c("l", "l", "l", "|","c", "c", "|","c"),
                                  label = "tab:DDM",
                                  caption = paste0("\\raggedright Posterior mean and 95\\% CI ",
                                                   "for the group-level means of the DDM ",
                                                   "parameters for the ",
                                                   "\\textcite{fish2018psychiatry_research} ",
                                                   "data as well as posterior differences ",
-                                                  "between controls and patients and ",
-                                                  "between controls and relatives. ",
+                                                  "between controls and patients. ",
                                                   "Credible clinical differences are in bold."))
 
 addtorow <- list()
 addtorow$pos <- list(c(-1), c(2, 4, 6, 8, 10))
-addtorow$command <- c(paste0("&&\\multicolumn{3}{|c|}{Groups}",
-                             "&\\multicolumn{2}{c}{Differences} \\\\"),
+addtorow$command <- c(paste0("&&\\multicolumn{2}{|c|}{Groups}",
+                             "&\\multicolumn{1}{c}{Differences} \\\\"),
                       "\\midrule")
 
-print(table_comparison_DDM_1, type = "latex" ,
+print(table_comparison_DDM, type = "latex" ,
       file = "figures/TableDDMComparison.tex" , 
       sanitize.text.function = function(x){x} ,
       include.rownames = FALSE ,
